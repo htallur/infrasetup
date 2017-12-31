@@ -1,0 +1,71 @@
+#!/bin/bash
+#ports 22, 80, 443, 5671, 5672, 27017 inbound rules need to be open
+#https://github.com/picotrading/ansible-pulp
+#https://www.mankier.com/1/pulp-admin#Repositories
+#http://schmaustech.blogspot.com/2015/05/syncing-redhat-repos-with-pulp.html
+#https://howdoilinux.com/2015/01/pulp-2-5/
+yum-config-manager --enable rhui-REGION-rhel-server-optional rhui-REGION-rhel-server-extras
+yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-$(rpm -E '%{rhel}').noarch.rpm
+yum install ansible -y
+yum install -y qpid-cpp-server qpid-cpp-server-linearstore  ## not part of ansible pulp installation
+yum install -y python-django-1.6.11.6-1.el7 python-django-bash-completion-1.6.11.6-1.el7
+cat /dev/zero | ssh-keygen -q -N "" > /dev/null ## ssh keypair generation
+cd ~/.ssh
+cat id_rsa.pub >> authorized_keys
+ansible-galaxy install jtyr.pulp
+ansible-galaxy install jtyr.mongodb
+ansible-galaxy install jtyr.config_encoder_filters,master,config_encoder_filters
+cd /etc/ansible/roles
+mv jtyr.mongodb mongodb
+mv jtyr.pulp pulp
+cd
+<< EOF cat > deploy_pulp.yml
+---
+# Example of a single host installation
+- hosts: all
+  tasks:
+  - name: Gathering Ansible facts
+    setup:
+  roles:
+    - role: mongodb
+      mongodb_net_bindIp: 127.0.0.1
+      mongodb_net_wireObjectCheck: false
+      mongodb_net_unixDomainSocket_enabled: true
+      mongodb_processManagement_fork: true
+      mongodb_systemLog_logAppend: true
+      mongodb_systemLog_timeStampFormat: iso8601-utc
+    - role: pulp
+      pulp_install_qpid: true
+      pulp_install_server: true
+      pulp_install_admin: true
+      pulp_install_consumer: true
+      pulp_run_celerybeat: true
+      pulp_run_resource_manager: true
+      pulp_host: "{{ ansible_fqdn }}"
+EOF
+hostname > hosts
+export ANSIBLE_HOST_KEY_CHECKING=False
+/bin/ansible-playbook -i hosts deploy_pulp.yml
+systemctl stop httpd pulp_workers pulp_resource_manager pulp_celerybeat goferd qpidd
+sudo -u apache pulp-manage-db
+systemctl start httpd pulp_workers pulp_resource_manager pulp_celerybeat goferd qpidd
+cat /etc/pki/pulp/ca.key >/etc/pki/pulp/rsa.key
+chown root:apache /etc/pki/pulp/rsa.key
+chmod 640 /etc/pki/pulp/rsa.key
+
+#-----------
+## Add the following snippet to ``~/.pulp/admin.conf``
+#
+#[auth]
+#username: admin
+#password: admin
+#------------
+# to install debian/ubuntu plup plugins
+# yum install pulp-deb-plugins  python-debian python-pulp-deb-common python2-debpkgr pulp-deb-admin-extensions
+# systemctl stop httpd pulp_celerybeat pulp_resource_manager pulp_workers qpidd goferd
+# sudo -u apache pulp-manage-db
+# systemctl start httpd pulp_celerybeat pulp_resource_manager pulp_workers qpidd goferd
+##* pulp-admin rpm repo update --repo-id epel --serve-http=true
+##* pulp-admin rpm repo publish run --repo-id epel
+## pulp-admin rpm repo list --detail
+#
