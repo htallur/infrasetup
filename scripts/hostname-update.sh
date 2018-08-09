@@ -1,4 +1,5 @@
 #!/bin/bash
+#test develop
 # set hostname irrespective of LINUX DISTRO
 # currently works for redhat, centos, ubuntu, amzn
 distro=`cat /etc/*release | grep -i ^ID= | cut -d = -f 2 | tr -d '"'`
